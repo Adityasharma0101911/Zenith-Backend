@@ -6,6 +6,9 @@ from flask import Flask, jsonify, request
 # import cors so the frontend can talk to the backend
 from flask_cors import CORS
 
+# secure password hashing for ibm z compliance
+from werkzeug.security import generate_password_hash
+
 # import database functions
 from database import init_db, get_db_connection
 
@@ -28,11 +31,14 @@ def register():
     username = data["username"]
     password = data["password"]
 
+    # hash the password so we never store plain text
+    hashed_password = generate_password_hash(password)
+
     # open a connection to the database
     conn = get_db_connection()
 
-    # insert the new user into the users table
-    conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+    # insert the new user with the hashed password into the users table
+    conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
 
     # save the changes to the database
     conn.commit()
