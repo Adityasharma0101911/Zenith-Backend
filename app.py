@@ -8,7 +8,7 @@ import os
 import json
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from database import init_db, get_db_connection
 from ai_service import get_ai_advice
@@ -16,6 +16,16 @@ from backboard_service import chat_with_ai, build_context_message
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}})
+
+# handle cors preflight for all routes
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return resp
 
 # ensure tables exist on startup
 init_db()

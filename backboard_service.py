@@ -4,8 +4,9 @@ import requests
 import os
 from database import get_db_connection
 
-# base url for backboard api
-BASE_URL = os.getenv("BACKBOARD_BASE_URL", "https://app.backboard.io/api")
+# base url read at call time so env vars are loaded
+def get_base_url():
+    return os.getenv("BACKBOARD_BASE_URL", "https://app.backboard.io/api")
 
 # returns auth headers for backboard
 def get_headers():
@@ -60,7 +61,7 @@ def get_or_create_assistant(section):
     # create a new assistant via backboard api (db closed during http call)
     try:
         res = requests.post(
-            f"{BASE_URL}/assistants",
+            f"{get_base_url()}/assistants",
             json={
                 "name": ASSISTANT_NAMES.get(section, section),
                 "system_prompt": SYSTEM_PROMPTS.get(section, "You are a helpful AI assistant."),
@@ -105,7 +106,7 @@ def get_or_create_thread(user_id, section):
     # create a thread under the assistant (db closed during http call)
     try:
         res = requests.post(
-            f"{BASE_URL}/assistants/{assistant_id}/threads",
+            f"{get_base_url()}/assistants/{assistant_id}/threads",
             json={},
             headers=get_headers(),
             timeout=15,
@@ -131,11 +132,12 @@ def get_or_create_thread(user_id, section):
 def send_message(thread_id, content):
     try:
         res = requests.post(
-            f"{BASE_URL}/threads/{thread_id}/messages",
+            f"{get_base_url()}/threads/{thread_id}/messages",
             headers=get_headers(),
             json={"content": content, "stream": False},
             timeout=30,
         )
+        print(f"[AI] send_message status={res.status_code}")
         data = res.json()
         # try multiple possible response fields
         return data.get("content") or data.get("message") or data.get("response") or data.get("text") or "Sorry, I couldn't process that right now."
