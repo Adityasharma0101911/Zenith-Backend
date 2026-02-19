@@ -1,0 +1,20 @@
+# virtual environment
+venv/
+env/
+.venv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# environment variables
+.env
+
+# database file
+*.db
+
+# agent config
+.agent/
+
+# misc
+.DS_Store
