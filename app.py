@@ -450,25 +450,16 @@ def ai_brief():
     section = data.get("section", "guardian")
     force = data.get("force", False)
 
-    # check cache first (briefs older than 1 hour are stale)
+    # serve cached brief unless force refresh requested
     if not force:
         conn = get_db_connection()
         cached = conn.execute(
-            "SELECT brief, created_at FROM ai_briefs WHERE user_id = ? AND section = ?",
+            "SELECT brief FROM ai_briefs WHERE user_id = ? AND section = ?",
             (user["id"], section),
         ).fetchone()
         conn.close()
         if cached:
-            # check age — serve cache if under 1 hour old
-            try:
-                from datetime import datetime
-                created = datetime.strptime(cached["created_at"], "%Y-%m-%d %H:%M:%S")
-                age_seconds = (datetime.utcnow() - created).total_seconds()
-                if age_seconds < 3600:
-                    return jsonify({"brief": cached["brief"], "cached": True})
-            except Exception:
-                # if timestamp parsing fails, serve the cached version anyway
-                return jsonify({"brief": cached["brief"], "cached": True})
+            return jsonify({"brief": cached["brief"], "cached": True})
 
     # get user survey data
     raw = user["survey_data"] if "survey_data" in user.keys() else None
@@ -579,17 +570,21 @@ def purchase_evaluate():
         "If you say HOLD, suggest what questions they should ask themselves before buying."
     )
 
-    # get ai evaluation
-    raw = user["survey_data"] if "survey_data" in user.keys() else None
-    survey = json.loads(raw) if raw else {}
-    ai_response = chat_with_ai(user["id"], "guardian", prompt, survey)
+    try:
+        # get ai evaluation
+        raw = user["survey_data"] if "survey_data" in user.keys() else None
+        survey = json.loads(raw) if raw else {}
+        ai_response = chat_with_ai(user["id"], "guardian", prompt, survey)
 
-    # parse the ai verdict
-    verdict = "hold"
-    if ai_response.upper().startswith("APPROVE"):
-        verdict = "approve"
+        # parse the ai verdict
+        verdict = "hold"
+        if ai_response.upper().startswith("APPROVE"):
+            verdict = "approve"
 
-    return jsonify({"verdict": verdict, "analysis": ai_response, "item_name": item_name, "amount": amount})
+        return jsonify({"verdict": verdict, "analysis": ai_response, "item_name": item_name, "amount": amount})
+    except Exception as e:
+        print(f"[AI] purchase evaluate error: {e}")
+        return jsonify({"error": f"AI evaluation failed: {str(e)}"}), 500
 
 # execute a custom purchase after ai evaluation
 @app.route("/api/purchase/execute", methods=["POST"])
@@ -623,6 +618,31 @@ def purchase_execute():
     conn.commit()
     conn.close()
     return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
+
+# add income to balance and log the transaction
+@app.route("/api/income", methods=["POST"])
+def add_income():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json
+    source = data.get("source", "Income")
+    amount = float(data.get("amount", 0))
+
+    if amount <= 0:
+        return jsonify({"error": "Amount must be positive"}), 400
+
+    new_balance = user["balance"] + amount
+    conn = get_db_connection()
+    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    conn.execute(
+        "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+        (user["id"], f"Income: {source}", amount, "INCOME"),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "income added", "balance": new_balance})
 
 # run the server on port 5000
 if __name__ == "__main__":
