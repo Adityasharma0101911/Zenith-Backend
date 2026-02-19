@@ -9,6 +9,12 @@ from flask_cors import CORS
 # secure password hashing for ibm z compliance
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# import secrets to generate secure tokens
+import secrets
+
+# import json to handle survey data
+import json
+
 # import database functions
 from database import init_db, get_db_connection
 
@@ -17,6 +23,30 @@ app = Flask(__name__)
 
 # enable cors for all routes so frontend can make requests
 CORS(app)
+
+# this checks if the user's token is valid
+def get_user_from_token():
+    # get the authorization header from the request
+    auth_header = request.headers.get("Authorization")
+
+    # if there is no header, return nothing
+    if not auth_header:
+        return None
+
+    # extract the token from "Bearer <token>"
+    token = auth_header.replace("Bearer ", "")
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # find the user with this token
+    user = conn.execute("SELECT * FROM users WHERE token = ?", (token,)).fetchone()
+
+    # close the connection
+    conn.close()
+
+    # return the user row or None
+    return user
 
 # this is the home route that tells us the backend is running
 @app.route("/")
@@ -34,11 +64,14 @@ def register():
     # hash the password so we never store plain text
     hashed_password = generate_password_hash(password)
 
+    # this generates a secure token for the session
+    token = secrets.token_hex(16)
+
     # open a connection to the database
     conn = get_db_connection()
 
-    # insert the new user with the hashed password into the users table
-    conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+    # insert the new user with the hashed password and token
+    conn.execute("INSERT INTO users (username, password, token) VALUES (?, ?, ?)", (username, hashed_password, token))
 
     # save the changes to the database
     conn.commit()
@@ -46,8 +79,8 @@ def register():
     # close the connection
     conn.close()
 
-    # return a success message
-    return jsonify({"message": "user registered successfully"})
+    # return a success message with the token
+    return jsonify({"message": "user registered successfully", "token": token})
 
 # handles user login
 @app.route("/api/login", methods=["POST"])
@@ -63,23 +96,37 @@ def login():
     # find the user in the database by username
     user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
 
-    # close the connection
-    conn.close()
-
     # this checks if the password is correct
     if user and check_password_hash(user["password"], password):
-        # password matches so return success with the user id
-        return jsonify({"success": True, "user_id": user["id"]})
+        # this generates a secure token for the session
+        token = secrets.token_hex(16)
+
+        # save the new token to the database for this user
+        conn.execute("UPDATE users SET token = ? WHERE id = ?", (token, user["id"]))
+        conn.commit()
+        conn.close()
+
+        # password matches so return success with the token
+        return jsonify({"success": True, "token": token})
     else:
+        # close the connection
+        conn.close()
+
         # wrong username or password so return 401
         return jsonify({"error": "invalid username or password"}), 401
 
 # this saves the survey to the database
 @app.route("/api/onboarding", methods=["POST"])
 def onboarding():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
     # get the survey data from the request body
     data = request.json
-    user_id = data["user_id"]
     dosha = data["dosha"]
     stress_level = data["stress_level"]
     balance = data["balance"]
@@ -88,11 +135,10 @@ def onboarding():
     conn = get_db_connection()
 
     # build the survey answers into a string to store
-    import json
     survey_json = json.dumps({"dosha": dosha, "stress_level": stress_level, "balance": balance})
 
     # this column stores the survey answers
-    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (survey_json, user_id))
+    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (survey_json, user["id"]))
 
     # save the changes to the database
     conn.commit()
@@ -102,6 +148,29 @@ def onboarding():
 
     # return a success message
     return jsonify({"message": "onboarding data saved successfully"})
+
+# this sends the user data to the dashboard
+@app.route("/api/user_data", methods=["GET"])
+def user_data():
+    # check if the user has a valid token
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # parse the survey data if it exists
+    dosha = None
+    if user["survey_data"]:
+        survey = json.loads(user["survey_data"])
+        dosha = survey.get("dosha")
+
+    # return the user info as json
+    return jsonify({
+        "username": user["username"],
+        "balance": user["balance"],
+        "dosha": dosha,
+    })
 
 # run the server on port 5000
 if __name__ == "__main__":

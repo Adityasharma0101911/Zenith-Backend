@@ -24,7 +24,8 @@ def init_db():
             username TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
             balance REAL DEFAULT 0.0,
-            survey_data TEXT
+            survey_data TEXT,
+            token TEXT
         )
     """)
 
