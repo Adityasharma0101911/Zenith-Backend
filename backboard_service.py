@@ -64,11 +64,13 @@ def get_or_create_assistant(section):
             f"{get_base_url()}/assistants",
             json={
                 "name": ASSISTANT_NAMES.get(section, section),
+                "model": "gpt-4o",
                 "system_prompt": SYSTEM_PROMPTS.get(section, "You are a helpful AI assistant."),
             },
             headers=get_headers(),
             timeout=15,
         )
+        print(f"[AI] create_assistant status={res.status_code} body={res.text[:200]}")
         data = res.json()
         assistant_id = data.get("assistant_id") or data.get("id")
 
@@ -111,6 +113,7 @@ def get_or_create_thread(user_id, section):
             headers=get_headers(),
             timeout=15,
         )
+        print(f"[AI] create_thread status={res.status_code} body={res.text[:200]}")
         data = res.json()
         thread_id = data.get("thread_id") or data.get("id")
 
@@ -137,7 +140,9 @@ def send_message(thread_id, content):
             json={"content": content, "stream": False},
             timeout=30,
         )
-        print(f"[AI] send_message status={res.status_code}")
+        print(f"[AI] send_message status={res.status_code} body={res.text[:300]}")
+        if res.status_code != 200:
+            return "Sorry, the AI returned an error. Please try again."
         data = res.json()
         # try multiple possible response fields
         return data.get("content") or data.get("message") or data.get("response") or data.get("text") or "Sorry, I couldn't process that right now."
@@ -189,6 +194,15 @@ def build_context_message(section, survey_data):
 
     return " | ".join(parts)
 
+# clears cached assistant and thread data so they get recreated with fresh settings
+def reset_ai_cache():
+    conn = get_db_connection()
+    conn.execute("DELETE FROM ai_assistants")
+    conn.execute("DELETE FROM user_threads")
+    conn.commit()
+    conn.close()
+    print("[AI] cleared assistant and thread cache")
+
 # main function to chat with the ai for a given section
 def chat_with_ai(user_id, section, message, survey_data=None):
     thread_id, initialized = get_or_create_thread(user_id, section)
@@ -213,5 +227,20 @@ def chat_with_ai(user_id, section, message, survey_data=None):
             conn.commit()
             conn.close()
 
-    # send the actual user message
-    return send_message(thread_id, message)
+    # send the actual user message and retry once on failure
+    result = send_message(thread_id, message)
+
+    # if the response looks like an error, clear cache and retry once
+    if result.startswith("Sorry"):
+        print(f"[AI] first attempt failed for {section}, clearing cache and retrying")
+        reset_ai_cache()
+        thread_id, _ = get_or_create_thread(user_id, section)
+        if thread_id:
+            # re-send context if needed
+            if survey_data:
+                context = build_context_message(section, survey_data)
+                if context:
+                    send_message(thread_id, f"[User Profile] {context}. Remember this about me for all our conversations.")
+            result = send_message(thread_id, message)
+
+    return result

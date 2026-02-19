@@ -12,7 +12,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from database import init_db, get_db_connection
 from ai_service import get_ai_advice
-from backboard_service import chat_with_ai, build_context_message
+from backboard_service import chat_with_ai, build_context_message, reset_ai_cache
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}})
@@ -457,6 +457,15 @@ def ai_brief():
     response = chat_with_ai(user["id"], section, prompt, survey)
     return jsonify({"brief": response})
 
+
+# resets cached ai assistants and threads so they get recreated clean
+@app.route("/api/ai/reset", methods=["POST"])
+def ai_reset():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    reset_ai_cache()
+    return jsonify({"message": "AI cache cleared. Next request will create fresh assistants."})
 
 # ai chat for the three sections (scholar, guardian, vitals)
 @app.route("/api/ai/chat", methods=["POST"])
