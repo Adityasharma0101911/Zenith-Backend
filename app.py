@@ -224,6 +224,43 @@ def transaction_attempt():
     # return that the purchase was allowed
     return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
 
+# this updates the user stress level in the database
+@app.route("/api/update_stress", methods=["POST"])
+def update_stress():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # get the new stress level from the request
+    data = request.json
+    new_stress_level = data["new_stress_level"]
+
+    # load the existing survey data or start fresh
+    survey = {}
+    if user["survey_data"]:
+        survey = json.loads(user["survey_data"])
+
+    # update the stress level in the survey data
+    survey["stress_level"] = new_stress_level
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # save the updated survey data back to the database
+    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (json.dumps(survey), user["id"]))
+
+    # save the changes to the database
+    conn.commit()
+
+    # close the connection
+    conn.close()
+
+    # return a success message
+    return jsonify({"message": "stress level updated"})
+
 # run the server on port 5000
 if __name__ == "__main__":
     # initialize the database before starting the server
