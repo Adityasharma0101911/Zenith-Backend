@@ -15,7 +15,7 @@ from ai_service import get_ai_advice
 from backboard_service import chat_with_ai, build_context_message
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}})
 
 # ensure tables exist on startup
 init_db()
@@ -66,11 +66,15 @@ def register():
     # open a connection to the database
     conn = get_db_connection()
 
-    # insert the new user with the hashed password and token
-    conn.execute("INSERT INTO users (username, password, token) VALUES (?, ?, ?)", (username, hashed_password, token))
+    try:
+        # insert the new user with the hashed password and token
+        conn.execute("INSERT INTO users (username, password, token) VALUES (?, ?, ?)", (username, hashed_password, token))
 
-    # save the changes to the database
-    conn.commit()
+        # save the changes to the database
+        conn.commit()
+    except Exception:
+        conn.close()
+        return jsonify({"error": "username already taken"}), 409
 
     # close the connection
     conn.close()

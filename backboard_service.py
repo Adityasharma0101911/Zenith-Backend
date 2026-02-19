@@ -52,12 +52,12 @@ def get_or_create_assistant(section):
     row = conn.execute(
         "SELECT assistant_id FROM ai_assistants WHERE name = ?", (section,)
     ).fetchone()
+    conn.close()
 
     if row:
-        conn.close()
         return row["assistant_id"]
 
-    # create a new assistant via backboard api
+    # create a new assistant via backboard api (db closed during http call)
     try:
         res = requests.post(
             f"{BASE_URL}/assistants",
@@ -72,17 +72,17 @@ def get_or_create_assistant(section):
         assistant_id = data.get("assistant_id") or data.get("id")
 
         if assistant_id:
-            conn.execute(
+            conn2 = get_db_connection()
+            conn2.execute(
                 "INSERT OR REPLACE INTO ai_assistants (name, assistant_id) VALUES (?, ?)",
                 (section, assistant_id),
             )
-            conn.commit()
-            conn.close()
+            conn2.commit()
+            conn2.close()
             return assistant_id
     except Exception as e:
         print(f"Error creating assistant: {e}")
 
-    conn.close()
     return None
 
 # gets existing thread or creates a new one for user+section
@@ -92,18 +92,17 @@ def get_or_create_thread(user_id, section):
         "SELECT thread_id, initialized FROM user_threads WHERE user_id = ? AND assistant_name = ?",
         (user_id, section),
     ).fetchone()
+    conn.close()
 
     if row:
-        conn.close()
         return row["thread_id"], bool(row["initialized"])
 
     # get or create the assistant first
     assistant_id = get_or_create_assistant(section)
     if not assistant_id:
-        conn.close()
         return None, False
 
-    # create a thread under the assistant
+    # create a thread under the assistant (db closed during http call)
     try:
         res = requests.post(
             f"{BASE_URL}/assistants/{assistant_id}/threads",
@@ -115,17 +114,17 @@ def get_or_create_thread(user_id, section):
         thread_id = data.get("thread_id") or data.get("id")
 
         if thread_id:
-            conn.execute(
+            conn2 = get_db_connection()
+            conn2.execute(
                 "INSERT OR REPLACE INTO user_threads (user_id, assistant_name, thread_id, initialized) VALUES (?, ?, ?, 0)",
                 (user_id, section, thread_id),
             )
-            conn.commit()
-            conn.close()
+            conn2.commit()
+            conn2.close()
             return thread_id, False
     except Exception as e:
         print(f"Error creating thread: {e}")
 
-    conn.close()
     return None, False
 
 # sends a message to a thread and returns the ai response
