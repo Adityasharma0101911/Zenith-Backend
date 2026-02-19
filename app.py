@@ -15,8 +15,20 @@ import secrets
 # import json to handle survey data
 import json
 
+# import os to access environment variables
+import os
+
+# import dotenv to load secure keys from .env file
+from dotenv import load_dotenv
+
+# this loads secure environment variables for enterprise compliance
+load_dotenv()
+
 # import database functions
 from database import init_db, get_db_connection
+
+# import the ai service for insights
+from ai_service import get_ai_advice
 
 # create the flask app
 app = Flask(__name__)
@@ -260,6 +272,37 @@ def update_stress():
 
     # return a success message
     return jsonify({"message": "stress level updated"})
+
+# this creates the api endpoint to get ai insights
+@app.route("/api/ai/insights", methods=["GET"])
+def ai_insights():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # get the user's balance
+    balance = user["balance"]
+
+    # get the dosha and stress from survey data
+    dosha = "Unknown"
+    stress_level = 5
+    if user["survey_data"]:
+        survey = json.loads(user["survey_data"])
+        dosha = survey.get("dosha", "Unknown")
+        # try to get stress level as a number
+        try:
+            stress_level = int(survey.get("stress_level", 5))
+        except (ValueError, TypeError):
+            stress_level = 5
+
+    # pass the user data to the ai for analysis
+    result = get_ai_advice(dosha, balance, stress_level)
+
+    # return the ai advice as json
+    return jsonify({"advice": result})
 
 # run the server on port 5000
 if __name__ == "__main__":
