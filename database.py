@@ -64,6 +64,18 @@ def init_db():
         )
     """)
 
+    # caches ai briefs so we don't re-request every page load
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_briefs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            section TEXT,
+            brief TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, section)
+        )
+    """)
+
     # add survey_data column if upgrading from old schema
     try:
         conn.execute("ALTER TABLE users ADD COLUMN survey_data TEXT")

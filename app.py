@@ -13,9 +13,23 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 from database import init_db, get_db_connection
 from ai_service import get_ai_advice
 from backboard_service import chat_with_ai, build_context_message, reset_ai_cache
+import re
+import time
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}})
+
+# --- PII censoring utility ---
+# strips names and locations before sending user text to ai
+def censor_pii(text):
+    if not text:
+        return text
+    # common place-related words and proper nouns (capitalized words of 2+ chars)
+    # replace capitalized proper-noun sequences that look like names/places
+    censored = re.sub(r'\b[A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,})+\b', '[REDACTED]', text)
+    # also redact emails
+    censored = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '[EMAIL]', censored)
+    return censored
 
 # handle cors preflight for all routes
 @app.before_request
@@ -195,10 +209,13 @@ def survey():
         conn.close()
         return jsonify({"message": "survey saved"})
 
-    # GET — check if survey is completed
+    # GET — check if survey is completed and include live balance
     survey_data = user["survey_data"] if "survey_data" in user.keys() else None
     if survey_data:
-        return jsonify({"completed": True, "data": json.loads(survey_data)})
+        parsed = json.loads(survey_data)
+        # inject live balance from users table so guardian always shows current
+        parsed["balance"] = user["balance"]
+        return jsonify({"completed": True, "data": parsed})
     return jsonify({"completed": False})
 
 # this sends the user data to the dashboard
@@ -292,6 +309,20 @@ def transaction_attempt():
 
     # return that the purchase was allowed
     return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
+
+# allows the user to update their balance manually
+@app.route("/api/balance", methods=["POST"])
+def update_balance():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.json
+    new_balance = float(data.get("balance", 0))
+    conn = get_db_connection()
+    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "balance updated", "balance": new_balance})
 
 # this updates the user stress level in the database
 @app.route("/api/update_stress", methods=["POST"])
@@ -408,7 +439,7 @@ def history():
     # return the list as json
     return jsonify({"transactions": transactions})
 
-# proactive ai brief for jarvis-style dashboard
+# proactive ai brief for jarvis-style dashboard (cached per user+section)
 @app.route("/api/ai/brief", methods=["POST"])
 def ai_brief():
     user = get_user_from_token()
@@ -417,6 +448,27 @@ def ai_brief():
 
     data = request.json
     section = data.get("section", "guardian")
+    force = data.get("force", False)
+
+    # check cache first (briefs older than 1 hour are stale)
+    if not force:
+        conn = get_db_connection()
+        cached = conn.execute(
+            "SELECT brief, created_at FROM ai_briefs WHERE user_id = ? AND section = ?",
+            (user["id"], section),
+        ).fetchone()
+        conn.close()
+        if cached:
+            # check age — serve cache if under 1 hour old
+            try:
+                from datetime import datetime
+                created = datetime.strptime(cached["created_at"], "%Y-%m-%d %H:%M:%S")
+                age_seconds = (datetime.utcnow() - created).total_seconds()
+                if age_seconds < 3600:
+                    return jsonify({"brief": cached["brief"], "cached": True})
+            except Exception:
+                # if timestamp parsing fails, serve the cached version anyway
+                return jsonify({"brief": cached["brief"], "cached": True})
 
     # get user survey data
     raw = user["survey_data"] if "survey_data" in user.keys() else None
@@ -455,7 +507,17 @@ def ai_brief():
 
     prompt = brief_prompts.get(section, brief_prompts["guardian"])
     response = chat_with_ai(user["id"], section, prompt, survey)
-    return jsonify({"brief": response})
+
+    # cache the brief for this user+section
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO ai_briefs (user_id, section, brief, created_at) VALUES (?, ?, ?, datetime('now'))",
+        (user["id"], section, response),
+    )
+    conn.commit()
+    conn.close()
+
+    return jsonify({"brief": response, "cached": False})
 
 
 # resets cached ai assistants and threads so they get recreated clean
@@ -482,9 +544,85 @@ def ai_chat():
     raw = user["survey_data"] if "survey_data" in user.keys() else None
     survey = json.loads(raw) if raw else {}
 
-    # send to backboard ai
-    response = chat_with_ai(user["id"], section, message, survey)
+    # send to backboard ai (censor user message before sending)
+    censored_message = censor_pii(message)
+    response = chat_with_ai(user["id"], section, censored_message, survey)
     return jsonify({"response": response})
+
+# ai-powered purchase evaluation — asks ai if user should buy it
+@app.route("/api/purchase/evaluate", methods=["POST"])
+def purchase_evaluate():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json
+    item_name = censor_pii(data.get("item_name", ""))
+    amount = float(data.get("amount", 0))
+    reason = censor_pii(data.get("reason", ""))
+
+    balance = user["balance"]
+    stress = user["stress_level"] if user["stress_level"] else 5
+    profile = user["spending_profile"] or "Unknown"
+
+    # build prompt for the ai to evaluate the purchase
+    prompt = (
+        f"The user wants to buy '{item_name}' for ${amount:.2f}. "
+        f"Their current balance is ${balance:.2f}, spending profile is '{profile}', stress level is {stress}/10. "
+    )
+    if reason:
+        prompt += f"Their reason: '{reason}'. "
+    prompt += (
+        "Evaluate whether they should make this purchase. "
+        "Consider their financial health, balance, and stress. "
+        "Start with either 'APPROVE:' or 'HOLD:' followed by a brief explanation (2-3 sentences). "
+        "If you say HOLD, suggest what questions they should ask themselves before buying."
+    )
+
+    # get ai evaluation
+    raw = user["survey_data"] if "survey_data" in user.keys() else None
+    survey = json.loads(raw) if raw else {}
+    ai_response = chat_with_ai(user["id"], "guardian", prompt, survey)
+
+    # parse the ai verdict
+    verdict = "hold"
+    if ai_response.upper().startswith("APPROVE"):
+        verdict = "approve"
+
+    return jsonify({"verdict": verdict, "analysis": ai_response, "item_name": item_name, "amount": amount})
+
+# execute a custom purchase after ai evaluation
+@app.route("/api/purchase/execute", methods=["POST"])
+def purchase_execute():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json
+    item_name = data.get("item_name", "")
+    amount = float(data.get("amount", 0))
+
+    balance = user["balance"]
+    conn = get_db_connection()
+
+    if balance < amount:
+        conn.execute(
+            "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+            (user["id"], item_name, amount, "BLOCKED"),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
+
+    new_balance = balance - amount
+    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    conn.execute(
+        "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+        (user["id"], item_name, amount, "ALLOWED"),
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
 
 # run the server on port 5000
 if __name__ == "__main__":
