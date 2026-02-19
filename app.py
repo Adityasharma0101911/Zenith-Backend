@@ -172,6 +172,58 @@ def user_data():
         "dosha": dosha,
     })
 
+# this receives the purchase attempt
+@app.route("/api/transaction/attempt", methods=["POST"])
+def transaction_attempt():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # get the amount and item name from the request
+    data = request.json
+    amount = data["amount"]
+    item_name = data["item_name"]
+
+    # get the user's current balance
+    user_balance = user["balance"]
+
+    # get the user's stress level from their survey data
+    stress_level = 0
+    if user["survey_data"]:
+        survey = json.loads(user["survey_data"])
+        # try to get stress level as a number
+        try:
+            stress_level = int(survey.get("stress_level", 0))
+        except (ValueError, TypeError):
+            stress_level = 0
+
+    # this blocks the purchase if the user is broke
+    if user_balance < amount:
+        return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
+
+    # this blocks the purchase if the user is stressed and spending too much
+    if stress_level > 7 and amount > 50:
+        return jsonify({"status": "BLOCKED", "reason": "High stress detected. Impulse purchase blocked."})
+
+    # if we get here, the purchase is allowed
+    conn = get_db_connection()
+
+    # deduct the amount from the user's balance
+    new_balance = user_balance - amount
+    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+
+    # save the changes to the database
+    conn.commit()
+
+    # close the connection
+    conn.close()
+
+    # return that the purchase was allowed
+    return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
+
 # run the server on port 5000
 if __name__ == "__main__":
     # initialize the database before starting the server
