@@ -12,7 +12,7 @@ load_dotenv()
 
 from database import init_db, get_db_connection
 from ai_service import get_ai_advice
-from backboard_service import chat_with_ai
+from backboard_service import chat_with_ai, build_context_message
 
 app = Flask(__name__)
 CORS(app)
@@ -393,6 +393,56 @@ def history():
 
     # return the list as json
     return jsonify({"transactions": transactions})
+
+# proactive ai brief for jarvis-style dashboard
+@app.route("/api/ai/brief", methods=["POST"])
+def ai_brief():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json
+    section = data.get("section", "guardian")
+
+    # get user survey data
+    raw = user["survey_data"] if "survey_data" in user.keys() else None
+    survey = json.loads(raw) if raw else {}
+
+    if not survey:
+        return jsonify({"brief": "Complete your survey first so I can personalize your experience."})
+
+    # build context from survey
+    context = build_context_message(section, survey)
+
+    # section-specific prompts for proactive insights
+    brief_prompts = {
+        "scholar": (
+            f"Based on this student's profile: {context}. "
+            "Provide a personalized study brief. Start with a short greeting using their name. "
+            "Then give exactly 4 specific recommendations as numbered items. "
+            "Then give exactly 3 action items they should do this week, prefixed with '> '. "
+            "End with one motivational sentence. Be concise, no extra formatting."
+        ),
+        "guardian": (
+            f"Based on this user's financial profile: {context}. "
+            "Provide a personalized financial brief. Start with a short greeting using their name. "
+            "Then give exactly 4 specific financial insights or recommendations as numbered items. "
+            "Then give exactly 3 action items for better money management, prefixed with '> '. "
+            "End with one encouraging sentence. Be concise, no extra formatting."
+        ),
+        "vitals": (
+            f"Based on this user's health profile: {context}. "
+            "Provide a personalized health brief. Start with a short greeting using their name. "
+            "Then give exactly 4 specific health recommendations as numbered items. "
+            "Then give exactly 3 action items for this week, prefixed with '> '. "
+            "End with one motivational sentence. Be concise, no extra formatting."
+        ),
+    }
+
+    prompt = brief_prompts.get(section, brief_prompts["guardian"])
+    response = chat_with_ai(user["id"], section, prompt, survey)
+    return jsonify({"brief": response})
+
 
 # ai chat for the three sections (scholar, guardian, vitals)
 @app.route("/api/ai/chat", methods=["POST"])

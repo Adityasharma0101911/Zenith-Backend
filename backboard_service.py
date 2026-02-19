@@ -134,10 +134,12 @@ def send_message(thread_id, content):
         res = requests.post(
             f"{BASE_URL}/threads/{thread_id}/messages",
             headers=get_headers(),
-            data={"content": content, "stream": "false"},
+            json={"content": content, "stream": False},
             timeout=30,
         )
-        return res.json().get("content", "Sorry, I couldn't process that right now.")
+        data = res.json()
+        # try multiple possible response fields
+        return data.get("content") or data.get("message") or data.get("response") or data.get("text") or "Sorry, I couldn't process that right now."
     except Exception as e:
         print(f"Error sending message: {e}")
         return "Sorry, the AI is temporarily unavailable. Please try again."

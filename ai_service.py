@@ -43,10 +43,11 @@ def get_ai_advice(spending_profile, balance, stress):
                 res = requests.post(
                     f"{base_url}/threads/{thread_id}/messages",
                     headers=headers,
-                    data={"content": prompt, "stream": "false"},
+                    json={"content": prompt, "stream": False},
                     timeout=15,
                 )
-                return res.json().get("content", prompt)
+                data = res.json()
+                return data.get("content") or data.get("message") or data.get("response") or prompt
 
         # fallback response
         return f"Zenith AI: With stress at {stress}/10, consider a mindful pause before financial decisions today."
