@@ -73,6 +73,22 @@ def get_user_from_token():
 def home():
     return jsonify({"message": "Zenith Backend Online"})
 
+# lightweight health check — no tokens spent, no threads created
+@app.route("/api/health")
+def health():
+    server_ok = True
+    ai_ok = False
+    try:
+        # just check if backboard api responds to a simple GET (no messages sent)
+        import requests as req
+        base = os.getenv("BACKBOARD_BASE_URL", "https://app.backboard.io/api")
+        key = os.getenv("BACKBOARD_API_KEY")
+        r = req.get(f"{base}/assistants", headers={"X-API-Key": key}, timeout=5)
+        ai_ok = r.status_code in (200, 401, 403)  # any response = api is reachable
+    except Exception:
+        ai_ok = False
+    return jsonify({"server": server_ok, "ai": ai_ok})
+
 # handles user registration
 @app.route("/api/register", methods=["POST"])
 def register():
