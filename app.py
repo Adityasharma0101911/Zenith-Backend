@@ -7,7 +7,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 # secure password hashing for ibm z compliance
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # import database functions
 from database import init_db, get_db_connection
@@ -48,6 +48,31 @@ def register():
 
     # return a success message
     return jsonify({"message": "user registered successfully"})
+
+# handles user login
+@app.route("/api/login", methods=["POST"])
+def login():
+    # get username and password from the request body
+    data = request.json
+    username = data["username"]
+    password = data["password"]
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # find the user in the database by username
+    user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+
+    # close the connection
+    conn.close()
+
+    # this checks if the password is correct
+    if user and check_password_hash(user["password"], password):
+        # password matches so return success with the user id
+        return jsonify({"success": True, "user_id": user["id"]})
+    else:
+        # wrong username or password so return 401
+        return jsonify({"error": "invalid username or password"}), 401
 
 # run the server on port 5000
 if __name__ == "__main__":
