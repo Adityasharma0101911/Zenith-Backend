@@ -74,6 +74,35 @@ def login():
         # wrong username or password so return 401
         return jsonify({"error": "invalid username or password"}), 401
 
+# this saves the survey to the database
+@app.route("/api/onboarding", methods=["POST"])
+def onboarding():
+    # get the survey data from the request body
+    data = request.json
+    user_id = data["user_id"]
+    dosha = data["dosha"]
+    stress_level = data["stress_level"]
+    balance = data["balance"]
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # build the survey answers into a string to store
+    import json
+    survey_json = json.dumps({"dosha": dosha, "stress_level": stress_level, "balance": balance})
+
+    # this column stores the survey answers
+    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (survey_json, user_id))
+
+    # save the changes to the database
+    conn.commit()
+
+    # close the connection
+    conn.close()
+
+    # return a success message
+    return jsonify({"message": "onboarding data saved successfully"})
+
 # run the server on port 5000
 if __name__ == "__main__":
     # initialize the database before starting the server

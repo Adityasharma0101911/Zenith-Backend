@@ -23,7 +23,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
-            balance REAL DEFAULT 0.0
+            balance REAL DEFAULT 0.0,
+            survey_data TEXT
         )
     """)
 
