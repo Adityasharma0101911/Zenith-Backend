@@ -29,6 +29,18 @@ def init_db():
         )
     """)
 
+    # this creates a ledger for all purchases
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            item_name TEXT,
+            amount REAL,
+            status TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # save the changes to the database
     conn.commit()
 

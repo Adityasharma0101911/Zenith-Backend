@@ -173,15 +173,25 @@ def user_data():
 
     # parse the survey data if it exists
     dosha = None
+    stress_level = 5
     if user["survey_data"]:
         survey = json.loads(user["survey_data"])
         dosha = survey.get("dosha")
+        # try to get stress level as a number
+        try:
+            stress_level = int(survey.get("stress_level", 5))
+        except (ValueError, TypeError):
+            stress_level = 5
+
+    # this calculates an overall wellness metric
+    wellness_score = 100 - (stress_level * 10)
 
     # return the user info as json
     return jsonify({
         "username": user["username"],
         "balance": user["balance"],
         "dosha": dosha,
+        "wellness_score": wellness_score,
     })
 
 # this receives the purchase attempt
@@ -212,20 +222,41 @@ def transaction_attempt():
         except (ValueError, TypeError):
             stress_level = 0
 
+    # open a connection for transaction logging
+    conn = get_db_connection()
+
     # this blocks the purchase if the user is broke
     if user_balance < amount:
+        # this logs the blocked purchase attempt to the ledger
+        conn.execute(
+            "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+            (user["id"], item_name, amount, "BLOCKED")
+        )
+        conn.commit()
+        conn.close()
         return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
     # this blocks the purchase if the user is stressed and spending too much
     if stress_level > 7 and amount > 50:
+        # this logs the blocked purchase attempt to the ledger
+        conn.execute(
+            "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+            (user["id"], item_name, amount, "BLOCKED")
+        )
+        conn.commit()
+        conn.close()
         return jsonify({"status": "BLOCKED", "reason": "High stress detected. Impulse purchase blocked."})
 
     # if we get here, the purchase is allowed
-    conn = get_db_connection()
-
     # deduct the amount from the user's balance
     new_balance = user_balance - amount
     conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+
+    # this logs the allowed purchase to the ledger
+    conn.execute(
+        "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+        (user["id"], item_name, amount, "ALLOWED")
+    )
 
     # save the changes to the database
     conn.commit()
@@ -303,6 +334,75 @@ def ai_insights():
 
     # return the ai advice as json
     return jsonify({"advice": result})
+
+# this forces a high stress low funds state for the demo
+@app.route("/api/demo_mode", methods=["POST"])
+def demo_mode():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # load the existing survey data or start fresh
+    survey = {}
+    if user["survey_data"]:
+        survey = json.loads(user["survey_data"])
+
+    # set stress to 9 for the demo
+    survey["stress_level"] = 9
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # set the balance to 10 dollars for the demo
+    conn.execute("UPDATE users SET balance = ?, survey_data = ? WHERE id = ?",
+                 (10.0, json.dumps(survey), user["id"]))
+
+    # save the changes to the database
+    conn.commit()
+
+    # close the connection
+    conn.close()
+
+    # return a success message
+    return jsonify({"message": "demo mode activated", "balance": 10.0, "stress_level": 9})
+
+# this fetches the user purchase history
+@app.route("/api/history", methods=["GET"])
+def history():
+    # this secures the route so only logged in users can use it
+    user = get_user_from_token()
+
+    # if no valid token, return 401
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # open a connection to the database
+    conn = get_db_connection()
+
+    # query the transactions table for this user ordered by newest first
+    rows = conn.execute(
+        "SELECT item_name, amount, status, timestamp FROM transactions WHERE user_id = ? ORDER BY timestamp DESC",
+        (user["id"],)
+    ).fetchall()
+
+    # close the connection
+    conn.close()
+
+    # convert each row to a dictionary for json
+    transactions = []
+    for row in rows:
+        transactions.append({
+            "item_name": row["item_name"],
+            "amount": row["amount"],
+            "status": row["status"],
+            "timestamp": row["timestamp"],
+        })
+
+    # return the list as json
+    return jsonify({"transactions": transactions})
 
 # run the server on port 5000
 if __name__ == "__main__":
