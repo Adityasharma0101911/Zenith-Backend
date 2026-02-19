@@ -11,3 +11,27 @@ def get_db_connection():
 
     # return the connection so other parts of the app can use it
     return conn
+
+# creates the main user table
+def init_db():
+    # get a connection to the database
+    conn = get_db_connection()
+
+    # create the users table if it doesn't already exist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            balance REAL DEFAULT 0.0
+        )
+    """)
+
+    # save the changes to the database
+    conn.commit()
+
+    # close the connection
+    conn.close()
+
+# run init_db when this file is imported so the table is always ready
+init_db()
