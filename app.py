@@ -6,14 +6,11 @@ from flask import Flask, jsonify, request
 # import cors so the frontend can talk to the backend
 from flask_cors import CORS
 
-# secure password hashing for ibm z compliance
+# secure password hashing
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # import secrets to generate secure tokens
 import secrets
-
-# import json to handle survey data
-import json
 
 # import os to access environment variables
 import os
@@ -21,7 +18,7 @@ import os
 # import dotenv to load secure keys from .env file
 from dotenv import load_dotenv
 
-# this loads secure environment variables for enterprise compliance
+# this loads environment variables from the .env file
 load_dotenv()
 
 # import database functions
@@ -127,7 +124,7 @@ def login():
         # wrong username or password so return 401
         return jsonify({"error": "invalid username or password"}), 401
 
-# this saves the survey to the database
+# this saves the onboarding profile to the database
 @app.route("/api/onboarding", methods=["POST"])
 def onboarding():
     # this secures the route so only logged in users can use it
@@ -137,20 +134,20 @@ def onboarding():
     if not user:
         return jsonify({"error": "unauthorized"}), 401
 
-    # get the survey data from the request body
+    # get the profile data from the request body
     data = request.json
-    dosha = data["dosha"]
-    stress_level = data["stress_level"]
-    balance = data["balance"]
+    name = data.get("name", "")
+    spending_profile = data.get("spending_profile", "")
+    balance = data.get("balance", 0.0)
 
     # open a connection to the database
     conn = get_db_connection()
 
-    # build the survey answers into a string to store
-    survey_json = json.dumps({"dosha": dosha, "stress_level": stress_level, "balance": balance})
-
-    # this column stores the survey answers
-    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (survey_json, user["id"]))
+    # save the onboarding data to dedicated columns
+    conn.execute(
+        "UPDATE users SET name = ?, spending_profile = ?, balance = ? WHERE id = ?",
+        (name, spending_profile, balance, user["id"])
+    )
 
     # save the changes to the database
     conn.commit()
@@ -171,17 +168,8 @@ def user_data():
     if not user:
         return jsonify({"error": "unauthorized"}), 401
 
-    # parse the survey data if it exists
-    dosha = None
-    stress_level = 5
-    if user["survey_data"]:
-        survey = json.loads(user["survey_data"])
-        dosha = survey.get("dosha")
-        # try to get stress level as a number
-        try:
-            stress_level = int(survey.get("stress_level", 5))
-        except (ValueError, TypeError):
-            stress_level = 5
+    # read stress level from the dedicated column
+    stress_level = user["stress_level"] if user["stress_level"] else 1
 
     # this calculates an overall wellness metric
     wellness_score = 100 - (stress_level * 10)
@@ -189,8 +177,10 @@ def user_data():
     # return the user info as json
     return jsonify({
         "username": user["username"],
+        "name": user["name"] or user["username"],
         "balance": user["balance"],
-        "dosha": dosha,
+        "spending_profile": user["spending_profile"],
+        "stress_level": stress_level,
         "wellness_score": wellness_score,
     })
 
@@ -212,22 +202,15 @@ def transaction_attempt():
     # get the user's current balance
     user_balance = user["balance"]
 
-    # get the user's stress level from their survey data
-    stress_level = 0
-    if user["survey_data"]:
-        survey = json.loads(user["survey_data"])
-        # try to get stress level as a number
-        try:
-            stress_level = int(survey.get("stress_level", 0))
-        except (ValueError, TypeError):
-            stress_level = 0
+    # get the user's stress level from the dedicated column
+    stress_level = user["stress_level"] if user["stress_level"] else 0
 
     # open a connection for transaction logging
     conn = get_db_connection()
 
-    # this blocks the purchase if the user is broke
+    # rule 1: block if the user cannot afford it
     if user_balance < amount:
-        # this logs the blocked purchase attempt to the ledger
+        # log the blocked purchase attempt to the ledger
         conn.execute(
             "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
             (user["id"], item_name, amount, "BLOCKED")
@@ -236,23 +219,22 @@ def transaction_attempt():
         conn.close()
         return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
-    # this blocks the purchase if the user is stressed and spending too much
+    # rule 2: block if the user is stressed and spending too much
     if stress_level > 7 and amount > 50:
-        # this logs the blocked purchase attempt to the ledger
+        # log the blocked purchase attempt to the ledger
         conn.execute(
             "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
             (user["id"], item_name, amount, "BLOCKED")
         )
         conn.commit()
         conn.close()
-        return jsonify({"status": "BLOCKED", "reason": "High stress detected. Impulse purchase blocked."})
+        return jsonify({"status": "BLOCKED", "reason": "High stress impulse buy detected."})
 
-    # if we get here, the purchase is allowed
-    # deduct the amount from the user's balance
+    # rule 3: if we get here the purchase is allowed
     new_balance = user_balance - amount
     conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
 
-    # this logs the allowed purchase to the ledger
+    # log the allowed purchase to the ledger
     conn.execute(
         "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
         (user["id"], item_name, amount, "ALLOWED")
@@ -281,19 +263,11 @@ def update_stress():
     data = request.json
     new_stress_level = data["new_stress_level"]
 
-    # load the existing survey data or start fresh
-    survey = {}
-    if user["survey_data"]:
-        survey = json.loads(user["survey_data"])
-
-    # update the stress level in the survey data
-    survey["stress_level"] = new_stress_level
-
     # open a connection to the database
     conn = get_db_connection()
 
-    # save the updated survey data back to the database
-    conn.execute("UPDATE users SET survey_data = ? WHERE id = ?", (json.dumps(survey), user["id"]))
+    # save the new stress level to its dedicated column
+    conn.execute("UPDATE users SET stress_level = ? WHERE id = ?", (new_stress_level, user["id"]))
 
     # save the changes to the database
     conn.commit()
@@ -317,20 +291,12 @@ def ai_insights():
     # get the user's balance
     balance = user["balance"]
 
-    # get the dosha and stress from survey data
-    dosha = "Unknown"
-    stress_level = 5
-    if user["survey_data"]:
-        survey = json.loads(user["survey_data"])
-        dosha = survey.get("dosha", "Unknown")
-        # try to get stress level as a number
-        try:
-            stress_level = int(survey.get("stress_level", 5))
-        except (ValueError, TypeError):
-            stress_level = 5
+    # get the spending profile and stress from dedicated columns
+    spending_profile = user["spending_profile"] or "Unknown"
+    stress_level = user["stress_level"] if user["stress_level"] else 5
 
     # pass the user data to the ai for analysis
-    result = get_ai_advice(dosha, balance, stress_level)
+    result = get_ai_advice(spending_profile, balance, stress_level)
 
     # return the ai advice as json
     return jsonify({"advice": result})
@@ -345,20 +311,14 @@ def demo_mode():
     if not user:
         return jsonify({"error": "unauthorized"}), 401
 
-    # load the existing survey data or start fresh
-    survey = {}
-    if user["survey_data"]:
-        survey = json.loads(user["survey_data"])
-
-    # set stress to 9 for the demo
-    survey["stress_level"] = 9
-
     # open a connection to the database
     conn = get_db_connection()
 
-    # set the balance to 10 dollars for the demo
-    conn.execute("UPDATE users SET balance = ?, survey_data = ? WHERE id = ?",
-                 (10.0, json.dumps(survey), user["id"]))
+    # set the balance to 10 dollars and stress to 9 for the demo
+    conn.execute(
+        "UPDATE users SET balance = ?, stress_level = ? WHERE id = ?",
+        (10.0, 9, user["id"])
+    )
 
     # save the changes to the database
     conn.commit()

@@ -6,24 +6,24 @@ import requests
 # import os to read the api key from environment variables
 import os
 
-# this optimizes the ai prompt for the hackathon criteria
-def get_ai_advice(dosha, balance, stress):
+# this builds advice based on the user spending profile and stress
+def get_ai_advice(spending_profile, balance, stress):
     # get the ai api key from the environment
     api_key = os.getenv("AI_API_KEY")
 
     # get the ai api url from the environment or use a placeholder
     api_url = os.getenv("AI_API_URL", "https://api.openai.com/v1/chat/completions")
 
-    # build the enterprise-grade prompt targeting UN SDG 3
+    # build the prompt with universal spending profile instead of cultural types
     prompt = (
         f"You are Zenith, an enterprise-grade AI guardian. "
-        f"The user is a {dosha} type, has ${balance}, and stress level {stress}/10. "
-        f"Provide one sentence of actionable, holistic advice that protects their financial and mental well-being."
+        f"The user has a '{spending_profile}' spending profile, has ${balance}, and stress level {stress}/10. "
+        f"Provide one short sentence of actionable advice protecting their financial and mental well-being."
     )
 
     # if there is no api key, return a fallback message
     if not api_key:
-        return f"Zenith AI: As a {dosha} type with stress level {stress}/10, consider taking a mindful pause before any financial decisions today."
+        return f"Zenith AI: With a stress level of {stress}/10, consider taking a mindful pause before any financial decisions today."
 
     # try to call the ai api
     try:
@@ -50,4 +50,4 @@ def get_ai_advice(dosha, balance, stress):
 
     except Exception as e:
         # if the ai call fails, return a fallback message
-        return f"Zenith AI: As a {dosha} type with stress level {stress}/10, consider taking a mindful pause before any financial decisions today."
+        return f"Zenith AI: With a stress level of {stress}/10, consider taking a mindful pause before any financial decisions today."

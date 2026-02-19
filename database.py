@@ -12,20 +12,22 @@ def get_db_connection():
     # return the connection so other parts of the app can use it
     return conn
 
-# creates the main user table
+# creates the tables the app needs
 def init_db():
     # get a connection to the database
     conn = get_db_connection()
 
-    # create the users table if it doesn't already exist
+    # create the users table with dedicated columns instead of a json blob
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
+            token TEXT,
+            name TEXT,
+            spending_profile TEXT,
             balance REAL DEFAULT 0.0,
-            survey_data TEXT,
-            token TEXT
+            stress_level INTEGER DEFAULT 1
         )
     """)
 
