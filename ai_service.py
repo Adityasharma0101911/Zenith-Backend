@@ -1,53 +1,55 @@
-# this sends secure data to the ai for analysis
+# legacy ai advice function (kept for the dashboard insight card)
 
-# import requests to make http calls to the ai provider
+import os
 import requests
 
-# import os to read the api key from environment variables
-import os
-
-# this builds advice based on the user spending profile and stress
+# provides a quick one-line insight for the dashboard
 def get_ai_advice(spending_profile, balance, stress):
-    # get the ai api key from the environment
-    api_key = os.getenv("AI_API_KEY")
+    api_key = os.getenv("BACKBOARD_API_KEY")
+    base_url = os.getenv("BACKBOARD_BASE_URL", "https://app.backboard.io/api")
 
-    # get the ai api url from the environment or use a placeholder
-    api_url = os.getenv("AI_API_URL", "https://api.openai.com/v1/chat/completions")
-
-    # build the prompt with universal spending profile instead of cultural types
     prompt = (
-        f"You are Zenith, an enterprise-grade AI guardian. "
-        f"The user has a '{spending_profile}' spending profile, has ${balance}, and stress level {stress}/10. "
+        f"You are Zenith, an AI wellness guardian. "
+        f"The user has a '{spending_profile}' spending profile, ${balance} balance, "
+        f"and stress level {stress}/10. "
         f"Provide one short sentence of actionable advice protecting their financial and mental well-being."
     )
 
-    # if there is no api key, return a fallback message
+    # fallback if no api key
     if not api_key:
-        return f"Zenith AI: With a stress level of {stress}/10, consider taking a mindful pause before any financial decisions today."
+        return f"Zenith AI: With stress at {stress}/10, consider a mindful pause before financial decisions today."
 
-    # try to call the ai api
     try:
-        # send the prompt to the ai provider
-        response = requests.post(
-            api_url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-3.5-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 100,
-            },
-            timeout=10,
-        )
+        # create a quick one-off thread for the insight
+        headers = {"X-API-Key": api_key}
 
-        # parse the ai response
-        data = response.json()
+        # use the guardian assistant if it exists
+        from database import get_db_connection
+        conn = get_db_connection()
+        row = conn.execute("SELECT assistant_id FROM ai_assistants WHERE name = 'guardian'").fetchone()
+        conn.close()
 
-        # return the ai's text
-        return data["choices"][0]["message"]["content"].strip()
+        if row:
+            # create a temporary thread
+            res = requests.post(
+                f"{base_url}/assistants/{row['assistant_id']}/threads",
+                json={},
+                headers=headers,
+                timeout=10,
+            )
+            thread_id = res.json().get("thread_id") or res.json().get("id")
 
-    except Exception as e:
-        # if the ai call fails, return a fallback message
-        return f"Zenith AI: With a stress level of {stress}/10, consider taking a mindful pause before any financial decisions today."
+            if thread_id:
+                res = requests.post(
+                    f"{base_url}/threads/{thread_id}/messages",
+                    headers=headers,
+                    data={"content": prompt, "stream": "false"},
+                    timeout=15,
+                )
+                return res.json().get("content", prompt)
+
+        # fallback response
+        return f"Zenith AI: With stress at {stress}/10, consider a mindful pause before financial decisions today."
+
+    except Exception:
+        return f"Zenith AI: With stress at {stress}/10, consider a mindful pause before financial decisions today."

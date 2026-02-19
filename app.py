@@ -1,36 +1,20 @@
-# this is the main entry point for the zenith backend
+# main entry point for the zenith backend
 
-# import flask to create the web server
 from flask import Flask, jsonify, request
-
-# import cors so the frontend can talk to the backend
 from flask_cors import CORS
-
-# secure password hashing
 from werkzeug.security import generate_password_hash, check_password_hash
-
-# import secrets to generate secure tokens
 import secrets
-
-# import os to access environment variables
 import os
-
-# import dotenv to load secure keys from .env file
+import json
 from dotenv import load_dotenv
 
-# this loads environment variables from the .env file
 load_dotenv()
 
-# import database functions
 from database import init_db, get_db_connection
-
-# import the ai service for insights
 from ai_service import get_ai_advice
+from backboard_service import chat_with_ai
 
-# create the flask app
 app = Flask(__name__)
-
-# enable cors for all routes so frontend can make requests
 CORS(app)
 
 # this checks if the user's token is valid
@@ -124,6 +108,19 @@ def login():
         # wrong username or password so return 401
         return jsonify({"error": "invalid username or password"}), 401
 
+# logs user out by clearing their token
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = get_db_connection()
+    conn.execute("UPDATE users SET token = NULL WHERE id = ?", (user["id"],))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "logged out"})
+
 # this saves the onboarding profile to the database
 @app.route("/api/onboarding", methods=["POST"])
 def onboarding():
@@ -158,6 +155,35 @@ def onboarding():
     # return a success message
     return jsonify({"message": "onboarding data saved successfully"})
 
+# handles comprehensive survey data (get or save)
+@app.route("/api/survey", methods=["GET", "POST"])
+def survey():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    if request.method == "POST":
+        data = request.json
+        name = data.get("name", "")
+        spending_profile = data.get("spending_profile", "")
+        balance = data.get("balance", 0.0)
+        stress_level = data.get("stress_level", 1)
+
+        conn = get_db_connection()
+        conn.execute(
+            "UPDATE users SET name = ?, spending_profile = ?, balance = ?, stress_level = ?, survey_data = ? WHERE id = ?",
+            (name, spending_profile, balance, stress_level, json.dumps(data), user["id"]),
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "survey saved"})
+
+    # GET — check if survey is completed
+    survey_data = user["survey_data"] if "survey_data" in user.keys() else None
+    if survey_data:
+        return jsonify({"completed": True, "data": json.loads(survey_data)})
+    return jsonify({"completed": False})
+
 # this sends the user data to the dashboard
 @app.route("/api/user_data", methods=["GET"])
 def user_data():
@@ -182,6 +208,7 @@ def user_data():
         "spending_profile": user["spending_profile"],
         "stress_level": stress_level,
         "wellness_score": wellness_score,
+        "survey_completed": bool(user["survey_data"] if "survey_data" in user.keys() else None),
     })
 
 # this receives the purchase attempt
@@ -363,6 +390,25 @@ def history():
 
     # return the list as json
     return jsonify({"transactions": transactions})
+
+# ai chat for the three sections (scholar, guardian, vitals)
+@app.route("/api/ai/chat", methods=["POST"])
+def ai_chat():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.json
+    section = data.get("section", "guardian")
+    message = data.get("message", "")
+
+    # get user survey data for context
+    raw = user["survey_data"] if "survey_data" in user.keys() else None
+    survey = json.loads(raw) if raw else {}
+
+    # send to backboard ai
+    response = chat_with_ai(user["id"], section, message, survey)
+    return jsonify({"response": response})
 
 # run the server on port 5000
 if __name__ == "__main__":
