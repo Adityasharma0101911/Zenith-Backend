@@ -9,10 +9,11 @@ def get_ai_advice(spending_profile, balance, stress):
     base_url = os.getenv("BACKBOARD_BASE_URL", "https://app.backboard.io/api")
 
     prompt = (
-        f"You are Zenith, an AI wellness guardian. "
+        f"You are Zenith, an AI wellness guardian — like JARVIS, calm and conversational. "
         f"The user has a '{spending_profile}' spending profile, ${balance} balance, "
         f"and stress level {stress}/10. "
-        f"Provide one short sentence of actionable advice protecting their financial and mental well-being."
+        f"Give one short, friendly sentence of advice for their financial and mental well-being. "
+        f"No markdown, no bold, no lists — just natural speech."
     )
 
     # fallback if no api key

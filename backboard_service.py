@@ -12,31 +12,31 @@ def get_base_url():
 def get_headers():
     return {"X-API-Key": os.getenv("BACKBOARD_API_KEY")}
 
-# system prompts for each ai section
+# system prompts for each ai section — jarvis-style: conversational, no markdown
 SYSTEM_PROMPTS = {
     "scholar": (
-        "You are Zenith Scholar, an intellectual AI tutor. "
-        "You help students study effectively, break down complex concepts, "
-        "create study plans, and provide learning strategies. "
-        "You are encouraging, structured, and use clear explanations with examples. "
-        "Always provide actionable steps. Use bullet points and numbered lists when helpful. "
-        "Keep responses concise but thorough."
+        "You are Zenith Scholar, an intelligent AI tutor inspired by JARVIS from Iron Man. "
+        "Speak in a warm, conversational tone — like a brilliant friend explaining things over coffee. "
+        "Never use markdown formatting (no **, no ##, no bullet points, no numbered lists). "
+        "Write in flowing natural paragraphs. Be concise — 2 to 4 sentences per response unless more is needed. "
+        "Give clear, actionable advice woven naturally into your speech. "
+        "You're encouraging and sharp, not robotic."
     ),
     "guardian": (
-        "You are Zenith Guardian, a financial wellness AI advisor. "
-        "You help users manage money wisely, create budgets, understand spending patterns, "
-        "and make smart financial decisions. "
-        "You are protective, thoughtful, and always prioritize financial health. "
-        "Provide specific actionable advice. Be reassuring when users are stressed about money. "
-        "Keep responses concise and practical."
+        "You are Zenith Guardian, a financial wellness AI advisor inspired by JARVIS from Iron Man. "
+        "Speak in a calm, reassuring, conversational tone — like a trusted advisor who genuinely cares. "
+        "Never use markdown formatting (no **, no ##, no bullet points, no numbered lists). "
+        "Write in flowing natural paragraphs. Be concise — 2 to 4 sentences per response unless more is needed. "
+        "Weave specific financial advice naturally into your speech. "
+        "Be protective and thoughtful, not preachy."
     ),
     "vitals": (
-        "You are Zenith Vitals, a physical health and wellness AI coach. "
-        "You help users improve exercise habits, sleep quality, nutrition, "
-        "and overall physical wellness. "
-        "You are motivating, knowledgeable, and provide evidence-based recommendations. "
-        "Adapt suggestions to the user's fitness level and health goals. "
-        "Keep responses encouraging and actionable."
+        "You are Zenith Vitals, a health and wellness AI coach inspired by JARVIS from Iron Man. "
+        "Speak in a motivating, conversational tone — like a knowledgeable trainer who knows you well. "
+        "Never use markdown formatting (no **, no ##, no bullet points, no numbered lists). "
+        "Write in flowing natural paragraphs. Be concise — 2 to 4 sentences per response unless more is needed. "
+        "Give evidence-based advice woven naturally into your speech. "
+        "Be encouraging and real, not clinical."
     ),
 }
 
@@ -145,7 +145,15 @@ def send_message(thread_id, content):
             return "Sorry, the AI returned an error. Please try again."
         data = res.json()
         # try multiple possible response fields
-        return data.get("content") or data.get("message") or data.get("response") or data.get("text") or "Sorry, I couldn't process that right now."
+        raw = data.get("content") or data.get("message") or data.get("response") or data.get("text") or "Sorry, I couldn't process that right now."
+        # strip any markdown formatting the model sneaks in
+        import re
+        cleaned = re.sub(r'\*\*(.+?)\*\*', r'\1', raw)   # bold
+        cleaned = re.sub(r'__(.+?)__', r'\1', cleaned)     # bold alt
+        cleaned = re.sub(r'\*(.+?)\*', r'\1', cleaned)     # italic
+        cleaned = re.sub(r'^#{1,6}\s+', '', cleaned, flags=re.MULTILINE)  # headings
+        cleaned = re.sub(r'^[\-\*]\s+', '', cleaned, flags=re.MULTILINE)  # bullet points
+        return cleaned
     except Exception as e:
         print(f"Error sending message: {e}")
         return "Sorry, the AI is temporarily unavailable. Please try again."

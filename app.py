@@ -471,28 +471,31 @@ def ai_brief():
     # build context from survey
     context = build_context_message(section, survey)
 
-    # section-specific prompts for proactive insights
+    # section-specific prompts for proactive insights — jarvis style
     brief_prompts = {
         "scholar": (
             f"Based on this student's profile: {context}. "
-            "Provide a personalized study brief. Start with a short greeting using their name. "
-            "Then give exactly 4 specific recommendations as numbered items. "
-            "Then give exactly 3 action items they should do this week, prefixed with '> '. "
-            "End with one motivational sentence. Be concise, no extra formatting."
+            "Give a personalized study brief. Greet them by name warmly. "
+            "Then share your key insights and what they should focus on this week — "
+            "all in natural flowing paragraphs, like a mentor catching up with them. "
+            "No markdown, no bold, no bullet points, no numbered lists. "
+            "End with something encouraging. Keep it to about 4-6 sentences total."
         ),
         "guardian": (
             f"Based on this user's financial profile: {context}. "
-            "Provide a personalized financial brief. Start with a short greeting using their name. "
-            "Then give exactly 4 specific financial insights or recommendations as numbered items. "
-            "Then give exactly 3 action items for better money management, prefixed with '> '. "
-            "End with one encouraging sentence. Be concise, no extra formatting."
+            "Give a personalized financial brief. Greet them by name warmly. "
+            "Then share your key financial insights and what they should do this week — "
+            "all in natural flowing paragraphs, like a trusted advisor checking in. "
+            "No markdown, no bold, no bullet points, no numbered lists. "
+            "End with something encouraging. Keep it to about 4-6 sentences total."
         ),
         "vitals": (
             f"Based on this user's health profile: {context}. "
-            "Provide a personalized health brief. Start with a short greeting using their name. "
-            "Then give exactly 4 specific health recommendations as numbered items. "
-            "Then give exactly 3 action items for this week, prefixed with '> '. "
-            "End with one motivational sentence. Be concise, no extra formatting."
+            "Give a personalized health brief. Greet them by name warmly. "
+            "Then share your key health insights and what they should focus on this week — "
+            "all in natural flowing paragraphs, like a coach who knows them well. "
+            "No markdown, no bold, no bullet points, no numbered lists. "
+            "End with something motivating. Keep it to about 4-6 sentences total."
         ),
     }
 
@@ -556,7 +559,7 @@ def purchase_evaluate():
     stress = user["stress_level"] if user["stress_level"] else 5
     profile = user["spending_profile"] or "Unknown"
 
-    # build prompt for the ai to evaluate the purchase
+    # build prompt for the ai to evaluate the purchase — jarvis style
     prompt = (
         f"The user wants to buy '{item_name}' for ${amount:.2f}. "
         f"Their current balance is ${balance:.2f}, spending profile is '{profile}', stress level is {stress}/10. "
@@ -564,10 +567,12 @@ def purchase_evaluate():
     if reason:
         prompt += f"Their reason: '{reason}'. "
     prompt += (
-        "Evaluate whether they should make this purchase. "
-        "Consider their financial health, balance, and stress. "
-        "Start with either 'APPROVE:' or 'HOLD:' followed by a brief explanation (2-3 sentences). "
-        "If you say HOLD, suggest what questions they should ask themselves before buying."
+        "Evaluate this purchase like a trusted advisor. "
+        "Consider their balance, spending habits, and stress level. "
+        "You MUST start your response with exactly 'APPROVE:' or 'HOLD:' (this is required for parsing). "
+        "Then explain your reasoning conversationally in 2-3 sentences — like you're talking to a friend. "
+        "No markdown, no lists, no bold text. Just natural speech. "
+        "If you say HOLD, gently nudge them to think about whether they truly need it right now."
     )
 
     try:
