@@ -210,7 +210,7 @@ def chat_with_ai(user_id, section, message, survey_data=None):
     if not thread_id:
         return "Sorry, the AI service is currently unavailable."
 
-    # send user context as first message if thread is new
+    # send user context as first message if thread is new (one-time cost)
     if not initialized and survey_data:
         context = build_context_message(section, survey_data)
         if context:
@@ -218,7 +218,7 @@ def chat_with_ai(user_id, section, message, survey_data=None):
                 thread_id,
                 f"[User Profile] {context}. Remember this about me for all our conversations.",
             )
-            # mark thread as initialized
+            # mark thread as initialized so we never resend context
             conn = get_db_connection()
             conn.execute(
                 "UPDATE user_threads SET initialized = 1 WHERE user_id = ? AND assistant_name = ?",
@@ -227,20 +227,6 @@ def chat_with_ai(user_id, section, message, survey_data=None):
             conn.commit()
             conn.close()
 
-    # send the actual user message and retry once on failure
+    # send the actual user message (no aggressive retry to save tokens)
     result = send_message(thread_id, message)
-
-    # if the response looks like an error, clear cache and retry once
-    if result.startswith("Sorry"):
-        print(f"[AI] first attempt failed for {section}, clearing cache and retrying")
-        reset_ai_cache()
-        thread_id, _ = get_or_create_thread(user_id, section)
-        if thread_id:
-            # re-send context if needed
-            if survey_data:
-                context = build_context_message(section, survey_data)
-                if context:
-                    send_message(thread_id, f"[User Profile] {context}. Remember this about me for all our conversations.")
-            result = send_message(thread_id, message)
-
     return result
