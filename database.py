@@ -1,9 +1,13 @@
 # import sqlite3 to work with the database
 import sqlite3
+import os
+
+# database file lives next to this script
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zenith.db")
 
 # this function creates a connection to the zenith database
 def get_db_connection():
-    conn = sqlite3.connect("zenith.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 

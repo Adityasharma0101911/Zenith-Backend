@@ -17,6 +17,9 @@ from backboard_service import chat_with_ai
 app = Flask(__name__)
 CORS(app)
 
+# ensure tables exist on startup
+init_db()
+
 # this checks if the user's token is valid
 def get_user_from_token():
     # get the authorization header from the request
