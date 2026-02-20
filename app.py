@@ -387,34 +387,6 @@ def ai_insights():
     # return the ai advice as json
     return jsonify({"advice": result})
 
-# this forces a high stress low funds state for the demo
-@app.route("/api/demo_mode", methods=["POST"])
-def demo_mode():
-    # this secures the route so only logged in users can use it
-    user = get_user_from_token()
-
-    # if no valid token, return 401
-    if not user:
-        return jsonify({"error": "unauthorized"}), 401
-
-    # open a connection to the database
-    conn = get_db_connection()
-
-    # set the balance to 10 dollars and stress to 9 for the demo
-    conn.execute(
-        "UPDATE users SET balance = ?, stress_level = ? WHERE id = ?",
-        (10.0, 9, user["id"])
-    )
-
-    # save the changes to the database
-    conn.commit()
-
-    # close the connection
-    conn.close()
-
-    # return a success message
-    return jsonify({"message": "demo mode activated", "balance": 10.0, "stress_level": 9})
-
 # this fetches the user purchase history
 @app.route("/api/history", methods=["GET"])
 def history():
