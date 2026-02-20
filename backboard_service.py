@@ -163,7 +163,7 @@ def build_context_message(section, survey_data):
     if not survey_data:
         return ""
 
-    parts = [f"User: {survey_data.get('name', 'User')}"]
+    parts = []
     age = survey_data.get("age_range", "")
     if age:
         parts.append(f"Age: {age}")

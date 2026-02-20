@@ -271,25 +271,11 @@ def transaction_attempt():
     amount = data["amount"]
     item_name = data["item_name"]
 
-    # get the user's current balance
-    user_balance = user["balance"]
-
     # get the user's stress level from the dedicated column
     stress_level = user["stress_level"] if user["stress_level"] else 0
 
     # open a connection for transaction logging
     conn = get_db_connection()
-
-    # rule 1: block if the user cannot afford it
-    if user_balance < amount:
-        # log the blocked purchase attempt to the ledger
-        conn.execute(
-            "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
-            (user["id"], item_name, amount, "BLOCKED")
-        )
-        conn.commit()
-        conn.close()
-        return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
     # rule 2: block if the user is stressed and spending too much
     if stress_level > 7 and amount > 50:
@@ -302,9 +288,20 @@ def transaction_attempt():
         conn.close()
         return jsonify({"status": "BLOCKED", "reason": "High stress impulse buy detected."})
 
+    # rule 1: block if the user cannot afford it
+    cursor = conn.execute("UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?", (amount, user["id"], amount))
+    if cursor.rowcount == 0:
+        # log the blocked purchase attempt to the ledger
+        conn.execute(
+            "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
+            (user["id"], item_name, amount, "BLOCKED")
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
+
     # rule 3: if we get here the purchase is allowed
-    new_balance = user_balance - amount
-    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    new_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (user["id"],)).fetchone()["balance"]
 
     # log the allowed purchase to the ledger
     conn.execute(
@@ -486,7 +483,7 @@ def ai_brief():
     brief_prompts = {
         "scholar": (
             f"Based on this student's profile: {context}. "
-            "Give a personalized study brief. Greet them by name warmly. "
+            "Give a personalized study brief. Greet them warmly. "
             "Then share your key insights and what they should focus on this week — "
             "all in natural flowing paragraphs, like a mentor catching up with them. "
             "No markdown, no bold, no bullet points, no numbered lists. "
@@ -494,7 +491,7 @@ def ai_brief():
         ),
         "guardian": (
             f"Based on this user's financial profile: {context}. "
-            "Give a personalized financial brief. Greet them by name warmly. "
+            "Give a personalized financial brief. Greet them warmly. "
             "Then share your key financial insights and what they should do this week — "
             "all in natural flowing paragraphs, like a trusted advisor checking in. "
             "No markdown, no bold, no bullet points, no numbered lists. "
@@ -502,7 +499,7 @@ def ai_brief():
         ),
         "vitals": (
             f"Based on this user's health profile: {context}. "
-            "Give a personalized health brief. Greet them by name warmly. "
+            "Give a personalized health brief. Greet them warmly. "
             "Then share your key health insights and what they should focus on this week — "
             "all in natural flowing paragraphs, like a coach who knows them well. "
             "No markdown, no bold, no bullet points, no numbered lists. "
@@ -613,10 +610,10 @@ def purchase_execute():
     item_name = data.get("item_name", "")
     amount = float(data.get("amount", 0))
 
-    balance = user["balance"]
     conn = get_db_connection()
 
-    if balance < amount:
+    cursor = conn.execute("UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?", (amount, user["id"], amount))
+    if cursor.rowcount == 0:
         conn.execute(
             "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
             (user["id"], item_name, amount, "BLOCKED"),
@@ -625,8 +622,7 @@ def purchase_execute():
         conn.close()
         return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
-    new_balance = balance - amount
-    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    new_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (user["id"],)).fetchone()["balance"]
     conn.execute(
         "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
         (user["id"], item_name, amount, "ALLOWED"),
@@ -649,9 +645,9 @@ def add_income():
     if amount <= 0:
         return jsonify({"error": "Amount must be positive"}), 400
 
-    new_balance = user["balance"] + amount
     conn = get_db_connection()
-    conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
+    conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user["id"]))
+    new_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (user["id"],)).fetchone()["balance"]
     conn.execute(
         "INSERT INTO transactions (user_id, item_name, amount, status) VALUES (?, ?, ?, ?)",
         (user["id"], f"Income: {source}", amount, "INCOME"),
