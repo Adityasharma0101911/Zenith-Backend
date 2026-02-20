@@ -1,12 +1,13 @@
 # main entry point for the zenith backend
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, g
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 import secrets
 import os
 import json
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
@@ -18,6 +19,22 @@ import time
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"]}})
+
+# thread pool for offloading blocking ai calls so the server stays responsive
+ai_executor = ThreadPoolExecutor(max_workers=4)
+
+# --- per-request db connection using flask g ---
+# this opens one connection per request and reuses it everywhere
+def get_db():
+    if "db" not in g:
+        g.db = get_db_connection()
+    return g.db
+
+@app.teardown_appcontext
+def close_db(exception):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
 # --- PII censoring utility ---
 # strips names and locations before sending user text to ai
@@ -46,16 +63,13 @@ def get_user_from_token():
     # extract the token from "Bearer <token>"
     token = auth_header.replace("Bearer ", "")
 
-    # open a connection to the database
-    conn = get_db_connection()
+    # use the per-request db connection instead of opening a new one
+    conn = get_db()
 
     # find the user with this token
     user = conn.execute("SELECT * FROM users WHERE token = ?", (token,)).fetchone()
 
-    # close the connection
-    conn.close()
-
-    # return the user row or None
+    # return the user row or None (connection stays open for the rest of the request)
     return user
 
 # this is the home route that tells us the backend is running
@@ -93,8 +107,8 @@ def register():
     # this generates a secure token for the session
     token = secrets.token_hex(16)
 
-    # open a connection to the database
-    conn = get_db_connection()
+    # use the per-request db connection
+    conn = get_db()
 
     try:
         # insert the new user with the hashed password and token
@@ -103,11 +117,7 @@ def register():
         # save the changes to the database
         conn.commit()
     except Exception:
-        conn.close()
         return jsonify({"error": "username already taken"}), 409
-
-    # close the connection
-    conn.close()
 
     # return a success message with the token
     return jsonify({"message": "user registered successfully", "token": token})
@@ -121,7 +131,7 @@ def login():
     password = data["password"]
 
     # open a connection to the database
-    conn = get_db_connection()
+    conn = get_db()
 
     # find the user in the database by username
     user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
@@ -134,14 +144,10 @@ def login():
         # save the new token to the database for this user
         conn.execute("UPDATE users SET token = ? WHERE id = ?", (token, user["id"]))
         conn.commit()
-        conn.close()
 
         # password matches so return success with the token
         return jsonify({"success": True, "token": token})
     else:
-        # close the connection
-        conn.close()
-
         # wrong username or password so return 401
         return jsonify({"error": "invalid username or password"}), 401
 
@@ -152,10 +158,9 @@ def logout():
     if not user:
         return jsonify({"error": "unauthorized"}), 401
 
-    conn = get_db_connection()
+    conn = get_db()
     conn.execute("UPDATE users SET token = NULL WHERE id = ?", (user["id"],))
     conn.commit()
-    conn.close()
     return jsonify({"message": "logged out"})
 
 # this saves the onboarding profile to the database
@@ -174,8 +179,8 @@ def onboarding():
     spending_profile = data.get("spending_profile", "")
     balance = data.get("balance", 0.0)
 
-    # open a connection to the database
-    conn = get_db_connection()
+    # use the per-request db connection
+    conn = get_db()
 
     # save the onboarding data to dedicated columns
     conn.execute(
@@ -185,9 +190,6 @@ def onboarding():
 
     # save the changes to the database
     conn.commit()
-
-    # close the connection
-    conn.close()
 
     # return a success message
     return jsonify({"message": "onboarding data saved successfully"})
@@ -206,13 +208,12 @@ def survey():
         balance = data.get("balance", 0.0)
         stress_level = data.get("stress_level", 1)
 
-        conn = get_db_connection()
+        conn = get_db()
         conn.execute(
             "UPDATE users SET name = ?, spending_profile = ?, balance = ?, stress_level = ?, survey_data = ? WHERE id = ?",
             (name, spending_profile, balance, stress_level, json.dumps(data), user["id"]),
         )
         conn.commit()
-        conn.close()
         return jsonify({"message": "survey saved"})
 
     # GET — check if survey is completed and include live balance
@@ -270,7 +271,7 @@ def transaction_attempt():
     stress_level = user["stress_level"] if user["stress_level"] else 0
 
     # open a connection for transaction logging
-    conn = get_db_connection()
+    conn = get_db()
 
     # rule 2: block if the user is stressed and spending too much
     if stress_level > 7 and amount > 50:
@@ -280,7 +281,6 @@ def transaction_attempt():
             (user["id"], item_name, amount, "BLOCKED")
         )
         conn.commit()
-        conn.close()
         return jsonify({"status": "BLOCKED", "reason": "High stress impulse buy detected."})
 
     # rule 1: block if the user cannot afford it
@@ -292,7 +292,6 @@ def transaction_attempt():
             (user["id"], item_name, amount, "BLOCKED")
         )
         conn.commit()
-        conn.close()
         return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
     # rule 3: if we get here the purchase is allowed
@@ -307,9 +306,6 @@ def transaction_attempt():
     # save the changes to the database
     conn.commit()
 
-    # close the connection
-    conn.close()
-
     # return that the purchase was allowed
     return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
 
@@ -321,10 +317,9 @@ def update_balance():
         return jsonify({"error": "unauthorized"}), 401
     data = request.json
     new_balance = float(data.get("balance", 0))
-    conn = get_db_connection()
+    conn = get_db()
     conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, user["id"]))
     conn.commit()
-    conn.close()
     return jsonify({"message": "balance updated", "balance": new_balance})
 
 # this updates the user stress level in the database
@@ -342,7 +337,7 @@ def update_stress():
     new_stress_level = data["new_stress_level"]
 
     # open a connection to the database
-    conn = get_db_connection()
+    conn = get_db()
 
     # save the new stress level to its dedicated column
     conn.execute("UPDATE users SET stress_level = ? WHERE id = ?", (new_stress_level, user["id"]))
@@ -352,9 +347,6 @@ def update_stress():
 
     # save the changes to the database
     conn.commit()
-
-    # close the connection
-    conn.close()
 
     # return a success message
     return jsonify({"message": "stress level updated"})
@@ -393,16 +385,13 @@ def history():
         return jsonify({"error": "unauthorized"}), 401
 
     # open a connection to the database
-    conn = get_db_connection()
+    conn = get_db()
 
     # query the transactions table for this user ordered by newest first
     rows = conn.execute(
         "SELECT item_name, amount, status, timestamp FROM transactions WHERE user_id = ? ORDER BY timestamp DESC",
         (user["id"],)
     ).fetchall()
-
-    # close the connection
-    conn.close()
 
     # convert each row to a dictionary for json
     transactions = []
@@ -424,13 +413,12 @@ def pulse_history():
     if not user:
         return jsonify({"error": "unauthorized"}), 401
 
-    conn = get_db_connection()
+    conn = get_db()
     # retrieve up to 365 days of history
     rows = conn.execute(
         "SELECT stress_level, date(timestamp) as log_date FROM pulse_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 365",
         (user["id"],)
     ).fetchall()
-    conn.close()
 
     history = [{"stress_level": row["stress_level"], "date": row["log_date"]} for row in rows]
     return jsonify({"history": history})
@@ -448,12 +436,11 @@ def ai_brief():
 
     # serve cached brief unless force refresh requested
     if not force:
-        conn = get_db_connection()
+        conn = get_db()
         cached = conn.execute(
             "SELECT brief FROM ai_briefs WHERE user_id = ? AND section = ?",
             (user["id"], section),
         ).fetchone()
-        conn.close()
         if cached:
             return jsonify({"brief": cached["brief"], "cached": True})
 
@@ -496,16 +483,18 @@ def ai_brief():
     }
 
     prompt = brief_prompts.get(section, brief_prompts["guardian"])
-    response = chat_with_ai(user["id"], section, prompt, survey)
+
+    # offload the blocking ai call to a background thread so other requests aren't blocked
+    future = ai_executor.submit(chat_with_ai, user["id"], section, prompt, survey)
+    response = future.result(timeout=60)
 
     # cache the brief for this user+section
-    conn = get_db_connection()
+    conn = get_db()
     conn.execute(
         "INSERT OR REPLACE INTO ai_briefs (user_id, section, brief, created_at) VALUES (?, ?, ?, datetime('now'))",
         (user["id"], section, response),
     )
     conn.commit()
-    conn.close()
 
     return jsonify({"brief": response, "cached": False})
 
@@ -536,7 +525,10 @@ def ai_chat():
 
     # send to backboard ai (censor user message before sending)
     censored_message = censor_pii(message)
-    response = chat_with_ai(user["id"], section, censored_message, survey)
+
+    # offload the blocking ai call to a background thread
+    future = ai_executor.submit(chat_with_ai, user["id"], section, censored_message, survey)
+    response = future.result(timeout=60)
     return jsonify({"response": response})
 
 # ai-powered purchase evaluation — asks ai if user should buy it
@@ -572,10 +564,11 @@ def purchase_evaluate():
     )
 
     try:
-        # get ai evaluation
+        # get ai evaluation — offload to thread pool
         raw = user["survey_data"] if "survey_data" in user.keys() else None
         survey = json.loads(raw) if raw else {}
-        ai_response = chat_with_ai(user["id"], "guardian", prompt, survey)
+        future = ai_executor.submit(chat_with_ai, user["id"], "guardian", prompt, survey)
+        ai_response = future.result(timeout=60)
 
         # parse the ai verdict
         verdict = "hold"
@@ -598,7 +591,7 @@ def purchase_execute():
     item_name = data.get("item_name", "")
     amount = float(data.get("amount", 0))
 
-    conn = get_db_connection()
+    conn = get_db()
 
     cursor = conn.execute("UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?", (amount, user["id"], amount))
     if cursor.rowcount == 0:
@@ -607,7 +600,6 @@ def purchase_execute():
             (user["id"], item_name, amount, "BLOCKED"),
         )
         conn.commit()
-        conn.close()
         return jsonify({"status": "BLOCKED", "reason": "Insufficient funds."})
 
     new_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (user["id"],)).fetchone()["balance"]
@@ -616,7 +608,6 @@ def purchase_execute():
         (user["id"], item_name, amount, "ALLOWED"),
     )
     conn.commit()
-    conn.close()
     return jsonify({"status": "ALLOWED", "amount": amount, "new_balance": new_balance})
 
 # add income to balance and log the transaction
@@ -633,7 +624,7 @@ def add_income():
     if amount <= 0:
         return jsonify({"error": "Amount must be positive"}), 400
 
-    conn = get_db_connection()
+    conn = get_db()
     conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user["id"]))
     new_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (user["id"],)).fetchone()["balance"]
     conn.execute(
@@ -641,7 +632,6 @@ def add_income():
         (user["id"], f"Income: {source}", amount, "INCOME"),
     )
     conn.commit()
-    conn.close()
     return jsonify({"message": "income added", "balance": new_balance})
 
 # run the server on port 5000
