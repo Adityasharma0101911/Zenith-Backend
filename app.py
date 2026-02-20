@@ -31,11 +31,6 @@ def censor_pii(text):
     censored = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '[EMAIL]', censored)
     return censored
 
-# basic health check for the dashboard
-@app.route("/api/health", methods=["GET"])
-def health():
-    return jsonify({"server": True, "ai": True})
-
 # ensure tables exist on startup
 init_db()
 
