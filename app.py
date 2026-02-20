@@ -352,6 +352,9 @@ def update_stress():
     # save the new stress level to its dedicated column
     conn.execute("UPDATE users SET stress_level = ? WHERE id = ?", (new_stress_level, user["id"]))
 
+    # log the check-in to the pulse history table for the heatmap
+    conn.execute("INSERT INTO pulse_logs (user_id, stress_level) VALUES (?, ?)", (user["id"], new_stress_level))
+
     # save the changes to the database
     conn.commit()
 
@@ -446,6 +449,24 @@ def history():
 
     # return the list as json
     return jsonify({"transactions": transactions})
+
+# fetches historical pulse check logs for the calendar heatmap
+@app.route("/api/pulse_history", methods=["GET"])
+def pulse_history():
+    user = get_user_from_token()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    conn = get_db_connection()
+    # retrieve up to 365 days of history
+    rows = conn.execute(
+        "SELECT stress_level, date(timestamp) as log_date FROM pulse_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 365",
+        (user["id"],)
+    ).fetchall()
+    conn.close()
+
+    history = [{"stress_level": row["stress_level"], "date": row["log_date"]} for row in rows]
+    return jsonify({"history": history})
 
 # proactive ai brief for jarvis-style dashboard (cached per user+section)
 @app.route("/api/ai/brief", methods=["POST"])

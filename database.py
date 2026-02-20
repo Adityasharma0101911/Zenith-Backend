@@ -76,6 +76,16 @@ def init_db():
         )
     """)
 
+    # stores daily stress levels for the calendar heatmap
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pulse_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            stress_level INTEGER,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # add new columns if upgrading from old schema
     for col in ["survey_data TEXT", "token TEXT", "name TEXT", "spending_profile TEXT", "balance REAL DEFAULT 0.0", "stress_level INTEGER DEFAULT 1"]:
         try:
