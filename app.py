@@ -43,7 +43,7 @@ def censor_pii(text):
         return text
     # common place-related words and proper nouns (capitalized words of 2+ chars)
     # replace capitalized proper-noun sequences that look like names/places
-    censored = re.sub(r'\b[A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,})+\b', '[REDACTED]', text)
+    censored = re.sub(r'\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){2,}\b', '[REDACTED]', text)
     # also redact emails
     censored = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '[EMAIL]', censored)
     return censored
@@ -98,6 +98,8 @@ def health():
 def register():
     # get username and password from the request body
     data = request.json
+    if not data or "username" not in data or "password" not in data:
+        return jsonify({"error": "username and password are required"}), 400
     username = data["username"]
     password = data["password"]
 
@@ -127,6 +129,8 @@ def register():
 def login():
     # get username and password from the request body
     data = request.json
+    if not data or "username" not in data or "password" not in data:
+        return jsonify({"error": "username and password are required"}), 400
     username = data["username"]
     password = data["password"]
 
@@ -264,8 +268,11 @@ def transaction_attempt():
 
     # get the amount and item name from the request
     data = request.json
-    amount = data["amount"]
-    item_name = data["item_name"]
+    amount = data.get("amount", 0)
+    item_name = data.get("item_name", "")
+
+    if not isinstance(amount, (int, float)) or amount <= 0:
+        return jsonify({"error": "Amount must be a positive number"}), 400
 
     # get the user's stress level from the dedicated column
     stress_level = user["stress_level"] if user["stress_level"] else 0
@@ -449,44 +456,52 @@ def ai_brief():
     survey = json.loads(raw) if raw else {}
 
     if not survey:
-        return jsonify({"brief": "Complete your survey first so I can personalize your experience."})
+        return jsonify({"brief": "Complete your survey first so I can personalize your experience.\n> What can Zenith do for me?\n> How does the AI personalization work?\n> What data do you need from me?"})
 
     # build context from survey
     context = build_context_message(section, survey)
 
     # section-specific prompts for proactive insights — jarvis style
+    # format: greeting paragraph, then numbered insights, then > example questions
     brief_prompts = {
         "scholar": (
             f"Based on this student's profile: {context}. "
-            "Give a personalized study brief. Greet them warmly. "
-            "Then share your key insights and what they should focus on this week — "
-            "all in natural flowing paragraphs, like a mentor catching up with them. "
-            "No markdown, no bold, no bullet points, no numbered lists. "
-            "End with something encouraging. Keep it to about 4-6 sentences total."
+            "Give a personalized study brief using EXACTLY this format (no markdown, no bold, no bullet points):\n"
+            "First, write a warm 2-sentence greeting paragraph about their profile.\n"
+            "Then write exactly 3 numbered insights/recommendations (e.g. '1. ...' on separate lines).\n"
+            "Then write exactly 3 lines starting with '> ' — these are example questions the student could ask you "
+            "(e.g. '> How can I improve my study habits?'). Make them relevant to their profile.\n"
+            "End with one short encouraging closing line."
         ),
         "guardian": (
             f"Based on this user's financial profile: {context}. "
-            "Give a personalized financial brief. Greet them warmly. "
-            "Then share your key financial insights and what they should do this week — "
-            "all in natural flowing paragraphs, like a trusted advisor checking in. "
-            "No markdown, no bold, no bullet points, no numbered lists. "
-            "End with something encouraging. Keep it to about 4-6 sentences total."
+            "Give a personalized financial brief using EXACTLY this format (no markdown, no bold, no bullet points):\n"
+            "First, write a warm 2-sentence greeting paragraph about their financial profile.\n"
+            "Then write exactly 3 numbered insights/recommendations (e.g. '1. ...' on separate lines).\n"
+            "Then write exactly 3 lines starting with '> ' — these are example questions the user could ask you "
+            "(e.g. '> Should I increase my emergency fund?'). Make them specific to their profile.\n"
+            "End with one short encouraging closing line."
         ),
         "vitals": (
             f"Based on this user's health profile: {context}. "
-            "Give a personalized health brief. Greet them warmly. "
-            "Then share your key health insights and what they should focus on this week — "
-            "all in natural flowing paragraphs, like a coach who knows them well. "
-            "No markdown, no bold, no bullet points, no numbered lists. "
-            "End with something motivating. Keep it to about 4-6 sentences total."
+            "Give a personalized health brief using EXACTLY this format (no markdown, no bold, no bullet points):\n"
+            "First, write a warm 2-sentence greeting paragraph about their health profile.\n"
+            "Then write exactly 3 numbered insights/recommendations (e.g. '1. ...' on separate lines).\n"
+            "Then write exactly 3 lines starting with '> ' — these are example questions the user could ask you "
+            "(e.g. '> What exercises are best for my goals?'). Make them relevant to their profile.\n"
+            "End with one short motivating closing line."
         ),
     }
 
     prompt = brief_prompts.get(section, brief_prompts["guardian"])
 
     # offload the blocking ai call to a background thread so other requests aren't blocked
-    future = ai_executor.submit(chat_with_ai, user["id"], section, prompt, survey)
-    response = future.result(timeout=60)
+    try:
+        future = ai_executor.submit(chat_with_ai, user["id"], section, prompt, survey)
+        response = future.result(timeout=60)
+    except Exception as e:
+        print(f"[AI] brief generation error: {e}")
+        response = "I'm having trouble generating your brief right now. Please try refreshing in a moment."
 
     # cache the brief for this user+section
     conn = get_db()
@@ -527,8 +542,12 @@ def ai_chat():
     censored_message = censor_pii(message)
 
     # offload the blocking ai call to a background thread
-    future = ai_executor.submit(chat_with_ai, user["id"], section, censored_message, survey)
-    response = future.result(timeout=60)
+    try:
+        future = ai_executor.submit(chat_with_ai, user["id"], section, censored_message, survey)
+        response = future.result(timeout=60)
+    except Exception as e:
+        print(f"[AI] chat error: {e}")
+        response = "Sorry, the AI is taking too long to respond. Please try again."
     return jsonify({"response": response})
 
 # ai-powered purchase evaluation — asks ai if user should buy it
@@ -590,6 +609,9 @@ def purchase_execute():
     data = request.json
     item_name = data.get("item_name", "")
     amount = float(data.get("amount", 0))
+
+    if amount <= 0:
+        return jsonify({"error": "Amount must be positive"}), 400
 
     conn = get_db()
 

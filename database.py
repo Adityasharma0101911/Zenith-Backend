@@ -95,6 +95,3 @@ def init_db():
 
     conn.commit()
     conn.close()
-
-# run init_db when this file is imported
-init_db()
