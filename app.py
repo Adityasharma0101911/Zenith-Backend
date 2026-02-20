@@ -31,15 +31,10 @@ def censor_pii(text):
     censored = re.sub(r'[\w.+-]+@[\w-]+\.[\w.-]+', '[EMAIL]', censored)
     return censored
 
-# handle cors preflight for all routes
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        resp = app.make_default_options_response()
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        return resp
+# basic health check for the dashboard
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({"server": True, "ai": True})
 
 # ensure tables exist on startup
 init_db()
@@ -387,7 +382,7 @@ def ai_insights():
     stress_level = user["stress_level"] if user["stress_level"] else 5
 
     # pass the user data to the ai for analysis
-    result = get_ai_advice(spending_profile, balance, stress_level)
+    result = get_ai_advice(user["id"], spending_profile, balance, stress_level)
 
     # return the ai advice as json
     return jsonify({"advice": result})
@@ -536,7 +531,7 @@ def ai_reset():
     user = get_user_from_token()
     if not user:
         return jsonify({"error": "unauthorized"}), 401
-    reset_ai_cache()
+    reset_ai_cache(user["id"])
     return jsonify({"message": "AI cache cleared. Next request will create fresh assistants."})
 
 # ai chat for the three sections (scholar, guardian, vitals)

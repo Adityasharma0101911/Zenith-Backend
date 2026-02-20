@@ -76,11 +76,12 @@ def init_db():
         )
     """)
 
-    # add survey_data column if upgrading from old schema
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN survey_data TEXT")
-    except Exception:
-        pass
+    # add new columns if upgrading from old schema
+    for col in ["survey_data TEXT", "token TEXT", "name TEXT", "spending_profile TEXT", "balance REAL DEFAULT 0.0", "stress_level INTEGER DEFAULT 1"]:
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()

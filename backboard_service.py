@@ -202,14 +202,14 @@ def build_context_message(section, survey_data):
 
     return " | ".join(parts)
 
-# clears cached assistant and thread data so they get recreated with fresh settings
-def reset_ai_cache():
+# clears cached user thread data so they get recreated with fresh settings
+def reset_ai_cache(user_id):
     conn = get_db_connection()
-    conn.execute("DELETE FROM ai_assistants")
-    conn.execute("DELETE FROM user_threads")
+    conn.execute("DELETE FROM user_threads WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM ai_briefs WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-    print("[AI] cleared assistant and thread cache")
+    print(f"[AI] cleared thread cache for user {user_id}")
 
 # main function to chat with the ai for a given section
 def chat_with_ai(user_id, section, message, survey_data=None):
